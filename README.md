@@ -56,7 +56,7 @@ You can also use:
 Install the pinned release from GitHub:
 
 ```bash
-pi install git:github.com/kevinvargasl/pi-quiet-activity@v1.0.0
+pi install git:github.com/kevinvargasl/pi-quiet-activity@v1.0.1
 ```
 
 To try the current main branch without installing it:

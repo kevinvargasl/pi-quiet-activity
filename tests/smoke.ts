@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage } from "../node_modules/@earendil-works/pi-ai/dist/types.d.ts";
+import type { ExtensionAPI } from "../node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts";
 import {
 	AssistantMessageComponent,
 	initTheme,
 	ToolExecutionComponent,
-	type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
 import { toolActivityLabel } from "../activity/labels.ts";
 import quietActivity from "../index.ts";
