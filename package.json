@@ -1,0 +1,45 @@
+{
+  "name": "pi-quiet-activity",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Final-answer-only interactive mode with live activity labels for Pi.",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "quiet-mode"
+  ],
+  "author": "Kevin Vargas",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kevinvargasl/pi-quiet-activity.git"
+  },
+  "homepage": "https://github.com/kevinvargasl/pi-quiet-activity#readme",
+  "bugs": {
+    "url": "https://github.com/kevinvargasl/pi-quiet-activity/issues"
+  },
+  "files": [
+    "index.ts",
+    "activity",
+    "render",
+    "README.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "typescript": "^7.0.2"
+  }
+}
