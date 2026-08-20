@@ -1,5 +1,6 @@
 import type {
 	AgentStartEvent,
+	BeforeAgentStartEvent,
 	ExtensionAPI,
 	ExtensionCommandContext,
 	ExtensionContext,
@@ -21,6 +22,8 @@ import {
 } from "./render/index.ts";
 
 const SHORTCUT = "f9";
+const FINAL_RESPONSE_INSTRUCTION =
+	"Quiet activity hides text from assistant turns that call tools. After tool use finishes, provide a self-contained final response. Repeat any result or explanation the user needs from earlier tool-calling turns.";
 const CONFIG_PATH = join(
 	process.env.PI_CODING_AGENT_DIR?.trim() || join(homedir(), ".pi", "agent"),
 	"extension-data",
@@ -135,6 +138,15 @@ function register(pi: ExtensionAPI, state: QuietState): void {
 		if (ctx.mode === "tui") state.renderer.install();
 		state.activity.reset(ctx);
 	});
+	pi.on(
+		"before_agent_start",
+		(event: BeforeAgentStartEvent, ctx: ExtensionContext) => {
+			if (ctx.mode !== "tui" || state.mode.current !== "enabled") return;
+			return {
+				systemPrompt: `${event.systemPrompt}\n\n${FINAL_RESPONSE_INSTRUCTION}`,
+			};
+		},
+	);
 	pi.on("agent_start", (_event: AgentStartEvent, ctx: ExtensionContext) =>
 		state.activity.reset(ctx),
 	);

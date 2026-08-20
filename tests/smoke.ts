@@ -9,7 +9,7 @@ import {
 import { toolActivityLabel } from "../activity/labels.ts";
 import quietActivity from "../index.ts";
 
-type EventHandler = (event: unknown, ctx: TestContext) => void;
+type EventHandler = (event: unknown, ctx: TestContext) => unknown;
 
 interface TestContext {
 	mode: "tui";
@@ -74,8 +74,8 @@ function createHarness(): Harness {
 	return { ctx, events, state, toggle };
 }
 
-function emit(harness: Harness, name: string, event: unknown = {}): void {
-	harness.events.get(name)?.(event, harness.ctx);
+function emit(harness: Harness, name: string, event: unknown = {}): unknown {
+	return harness.events.get(name)?.(event, harness.ctx);
 }
 
 function assertSafeActivityLabels(): void {
@@ -84,6 +84,15 @@ function assertSafeActivityLabels(): void {
 	});
 	assert.doesNotMatch(label, /supersecret|abc|\u001b/);
 	assert.match(label, /\[redacted\]/);
+}
+
+function assertFinalResponsePrompt(harness: Harness): void {
+	const result = emit(harness, "before_agent_start", {
+		systemPrompt: "base prompt",
+	}) as { systemPrompt: string };
+	assert.match(result.systemPrompt, /^base prompt\n\n/);
+	assert.match(result.systemPrompt, /self-contained final response/);
+	assert.match(result.systemPrompt, /earlier tool-calling turns/);
 }
 
 function assertActivityDisplay(harness: Harness): void {
@@ -144,6 +153,7 @@ function assistantMessage(
 function assertQuietRendering(): RenderFixture {
 	const finalMessage = assistantMessage(
 		[
+			{ type: "text", text: "full response first paragraph" },
 			{ type: "thinking", thinking: "secret process" },
 			{ type: "text", text: "final answer" },
 		],
@@ -159,6 +169,7 @@ function assertQuietRendering(): RenderFixture {
 
 	const final = new AssistantMessageComponent(finalMessage);
 	const finalRendered = final.render(100).join("\n");
+	assert.match(finalRendered, /full response first paragraph/);
 	assert.match(finalRendered, /final answer/);
 	assert.doesNotMatch(finalRendered, /secret process/);
 	final.updateContent(finalMessage, true);
@@ -183,6 +194,10 @@ function assertQuietRendering(): RenderFixture {
 function assertToggle(harness: Harness, fixture: RenderFixture): void {
 	harness.toggle(harness.ctx);
 	assert.equal(harness.state.notification, "Quiet activity disabled.");
+	assert.equal(
+		emit(harness, "before_agent_start", { systemPrompt: "base prompt" }),
+		undefined,
+	);
 	assert(fixture.process.render(100).length > 0);
 	assert(fixture.tool.render(100).length > 0);
 
@@ -197,6 +212,7 @@ export default function smokeTest(_pi: ExtensionAPI): void {
 	const harness = createHarness();
 	emit(harness, "session_start");
 	assertActivityDisplay(harness);
+	assertFinalResponsePrompt(harness);
 	const fixture = assertQuietRendering();
 	assertToggle(harness, fixture);
 	emit(harness, "session_shutdown");
