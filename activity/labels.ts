@@ -122,12 +122,27 @@ function formatSpec(spec: ActivitySpec, args: ToolArguments): string {
 	return value ? `${spec.action} ${value}` : spec.fallback;
 }
 
+function mcpActivityLabel(args: ToolArguments): string {
+	const server = findDetail(args, ["server", "serverName"]);
+	const tool = findDetail(args, ["tool", "toolName"]);
+	if (tool) return `Calling MCP ${server ? `${server}/${tool}` : tool}`;
+	if (server) return `Using MCP ${server}`;
+
+	const search = findDetail(args, ["search"]);
+	if (search) return `Searching MCP for ${search}`;
+
+	const target = findDetail(args, ["describe", "instructions", "name"]);
+	return target ? `Inspecting MCP ${target}` : "Using MCP";
+}
+
 export function toolActivityLabel(toolName: string, rawArgs: unknown): string {
 	const name = toolName.toLowerCase();
 	const staticLabel = STATIC_LABELS[name];
 	if (staticLabel) return staticLabel;
 
 	const args = asArguments(rawArgs);
+	if (name === "mcp") return mcpActivityLabel(args);
+
 	const spec = ACTIVITY_SPECS[name];
 	if (spec) return formatSpec(spec, args);
 

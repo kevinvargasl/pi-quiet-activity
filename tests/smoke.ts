@@ -84,6 +84,22 @@ function assertSafeActivityLabels(): void {
 	});
 	assert.doesNotMatch(label, /supersecret|abc|\u001b/);
 	assert.match(label, /\[redacted\]/);
+
+	assert.equal(
+		toolActivityLabel("mcp", { server: "context7" }),
+		"Using MCP context7",
+	);
+	assert.equal(
+		toolActivityLabel("mcp", {
+			server: "context7",
+			tool: "resolve-library-id",
+		}),
+		"Calling MCP context7/resolve-library-id",
+	);
+	assert.equal(
+		toolActivityLabel("mcp", { tool: "context7_resolve_library_id" }),
+		"Calling MCP context7_resolve_library_id",
+	);
 }
 
 function assertFinalResponsePrompt(harness: Harness): void {
@@ -115,10 +131,13 @@ function assertActivityDisplay(harness: Harness): void {
 
 	emit(harness, "tool_execution_start", {
 		toolCallId: "mcp-1",
-		toolName: "mcp_call",
-		args: { tool: "some-tool" },
+		toolName: "mcp",
+		args: { server: "context7", tool: "resolve-library-id" },
 	});
-	assert.equal(harness.state.workingMessage, "Calling some-tool...");
+	assert.equal(
+		harness.state.workingMessage,
+		"Calling MCP context7/resolve-library-id...",
+	);
 
 	emit(harness, "tool_execution_end", { toolCallId: "mcp-1" });
 	assert.equal(harness.state.workingMessage, "Writing 1234.csv...");

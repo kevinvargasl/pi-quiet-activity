@@ -11,10 +11,10 @@ User: Do this.
 Working...
 Reading abc.ts...
 Writing 1234.csv...
-Calling some-tool...
+Calling MCP context7/resolve-library-id...
 ```
 
-Built-in file, shell, search, web, MCP, task, and question tools receive concise labels. Unknown tools display `Using <tool-name>...`. Long details are normalized to one line and truncated. Terminal control sequences are removed, and common credentials in commands or URLs are redacted.
+Built-in file, shell, search, web, MCP, task, and question tools receive concise labels. MCP proxy calls include the server and tool when those fields are available. Unknown tools display `Using <tool-name>...`. Long details are normalized to one line and truncated. Terminal control sequences are removed, and common credentials in commands or URLs are redacted.
 
 The TUI hides:
 
@@ -88,7 +88,7 @@ This separates two cases:
 Install the pinned release from GitHub:
 
 ```bash
-pi install git:github.com/kevinvargasl/pi-quiet-activity@v1.1.0
+pi install git:github.com/kevinvargasl/pi-quiet-activity@v1.2.0
 ```
 
 To try the current main branch without installing it:
