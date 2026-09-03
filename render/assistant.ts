@@ -9,6 +9,7 @@ interface RenderState {
 	originalMessage: AssistantMessage;
 	renderedMessage: AssistantMessage;
 	isStreaming: boolean;
+	elapsed?: string;
 }
 
 interface RuntimeState {
@@ -30,6 +31,7 @@ interface PatchState {
 export interface AssistantRenderPatch {
 	install(): void;
 	refresh(): void;
+	finish(elapsed: string): void;
 	uninstall(): void;
 }
 
@@ -77,6 +79,7 @@ function createPatches(
 				originalMessage,
 				renderedMessage,
 				isStreaming,
+				elapsed: previous?.elapsed,
 			});
 			originals.update.call(this, renderedMessage, isStreaming);
 		},
@@ -84,11 +87,28 @@ function createPatches(
 			this: AssistantMessageComponent,
 			...args: Parameters<AssistantRender>
 		): string[] {
-			return shouldHide(state, isEnabled, this)
-				? []
-				: originals.render.call(this, ...args);
+			if (shouldHide(state, isEnabled, this)) return [];
+			const lines = originals.render.call(this, ...args);
+			const elapsed = state.components.get(this)?.elapsed;
+			return isEnabled() && elapsed ? [elapsed, ...lines] : lines;
 		},
 	};
+}
+
+function finish(state: PatchState, elapsed: string): void {
+	const entries = Array.from(state.components.entries());
+	for (let index = entries.length - 1; index >= 0; index -= 1) {
+		const [component, renderState] = entries[index];
+		const runtime = component as unknown as RuntimeState;
+		if (renderState.isStreaming || runtime.hasToolCalls) continue;
+		renderState.elapsed = elapsed;
+		state.originals?.update.call(
+			component,
+			renderState.renderedMessage,
+			renderState.isStreaming,
+		);
+		return;
+	}
 }
 
 function install(state: PatchState, isEnabled: EnabledCheck): void {
@@ -149,6 +169,7 @@ export function createAssistantRenderPatch(
 	return {
 		install: () => install(state, isEnabled),
 		refresh: () => refresh(state, isEnabled),
+		finish: (elapsed) => finish(state, elapsed),
 		uninstall: () => uninstall(state),
 	};
 }

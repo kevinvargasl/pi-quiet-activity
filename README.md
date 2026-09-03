@@ -23,7 +23,7 @@ The TUI hides:
 - all built-in and extension tool calls/results
 - the final answer while it is still streaming
 
-When the agent settles, the working line disappears and the finalized text blocks from the last assistant turn appear. The extension does not add anything to the footer.
+When the agent settles, the working line disappears and a compact elapsed time appears in dimmed text before the finalized answer, such as `Worked for 45s`, `Worked for 1m 23s`, or `Worked for 2h 12m`. The extension does not add anything to the footer.
 
 Some models, including Claude Opus 5 through GitHub Copilot, can put useful details in a tool-calling turn and finish with only a short phrase. Quiet mode now asks the model to repeat those details in a self-contained final response. Rendering stays display-only. Tool execution and saved session data are unchanged, but the extra instruction is part of the model's system prompt while quiet mode is enabled in the TUI.
 

@@ -16,6 +16,7 @@ import {
 	createActivityDisplay,
 	type ActivityDisplay,
 } from "./activity/display.ts";
+import { formatElapsedTime } from "./activity/timer.ts";
 import {
 	createQuietRenderPatcher,
 	type QuietRenderPatcher,
@@ -37,6 +38,7 @@ interface QuietState {
 	mode: { current: QuietMode };
 	activity: ActivityDisplay;
 	renderer: QuietRenderPatcher;
+	startedAt?: number;
 }
 
 function loadMode(): QuietMode {
@@ -147,9 +149,10 @@ function register(pi: ExtensionAPI, state: QuietState): void {
 			};
 		},
 	);
-	pi.on("agent_start", (_event: AgentStartEvent, ctx: ExtensionContext) =>
-		state.activity.reset(ctx),
-	);
+	pi.on("agent_start", (_event: AgentStartEvent, ctx: ExtensionContext) => {
+		state.startedAt = Date.now();
+		state.activity.reset(ctx);
+	});
 	pi.on(
 		"tool_execution_start",
 		(event: ToolExecutionStartEvent, ctx: ExtensionContext) =>
@@ -160,7 +163,13 @@ function register(pi: ExtensionAPI, state: QuietState): void {
 		(event: ToolExecutionEndEvent, ctx: ExtensionContext) =>
 			state.activity.end(event, ctx),
 	);
-	pi.on("agent_settled", () => state.activity.clear());
+	pi.on("agent_settled", (_event, ctx) => {
+		state.activity.clear();
+		if (state.startedAt === undefined) return;
+		const elapsed = formatElapsedTime(Date.now() - state.startedAt);
+		state.renderer.finish(ctx.ui.theme.fg("dim", `Worked for ${elapsed}`));
+		state.startedAt = undefined;
+	});
 	pi.on(
 		"session_shutdown",
 		(_event: SessionShutdownEvent, ctx: ExtensionContext) => {

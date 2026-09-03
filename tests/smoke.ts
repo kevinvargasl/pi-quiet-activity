@@ -7,6 +7,7 @@ import {
 	ToolExecutionComponent,
 } from "@earendil-works/pi-coding-agent";
 import { toolActivityLabel } from "../activity/labels.ts";
+import { formatElapsedTime } from "../activity/timer.ts";
 import quietActivity from "../index.ts";
 
 type EventHandler = (event: unknown, ctx: TestContext) => unknown;
@@ -31,6 +32,7 @@ interface Harness {
 }
 
 interface RenderFixture {
+	final: AssistantMessageComponent;
 	process: AssistantMessageComponent;
 	tool: ToolExecutionComponent;
 }
@@ -100,6 +102,12 @@ function assertSafeActivityLabels(): void {
 		toolActivityLabel("mcp", { tool: "context7_resolve_library_id" }),
 		"Calling MCP context7_resolve_library_id",
 	);
+}
+
+function assertElapsedTimeFormatting(): void {
+	assert.equal(formatElapsedTime(45_999), "45s");
+	assert.equal(formatElapsedTime(83_000), "1m 23s");
+	assert.equal(formatElapsedTime(7_920_000), "2h 12m");
 }
 
 function assertFinalResponsePrompt(harness: Harness): void {
@@ -207,7 +215,7 @@ function assertQuietRendering(): RenderFixture {
 		process.cwd(),
 	);
 	assert.deepEqual(tool.render(100), []);
-	return { process: processComponent, tool };
+	return { final, process: processComponent, tool };
 }
 
 function assertToggle(harness: Harness, fixture: RenderFixture): void {
@@ -228,11 +236,14 @@ function assertToggle(harness: Harness, fixture: RenderFixture): void {
 export default function smokeTest(_pi: ExtensionAPI): void {
 	initTheme();
 	assertSafeActivityLabels();
+	assertElapsedTimeFormatting();
 	const harness = createHarness();
 	emit(harness, "session_start");
 	assertActivityDisplay(harness);
 	assertFinalResponsePrompt(harness);
 	const fixture = assertQuietRendering();
+	emit(harness, "agent_settled");
+	assert.match(fixture.final.render(100).join("\n"), /^Worked for \d+s\n/);
 	assertToggle(harness, fixture);
 	emit(harness, "session_shutdown");
 	assert(fixture.tool.render(100).length > 0);

@@ -4,6 +4,7 @@ import { createToolRenderPatch } from "./tool.ts";
 export interface QuietRenderPatcher {
 	install(): void;
 	refresh(): void;
+	finish(elapsed: string): void;
 	uninstall(): void;
 }
 
@@ -19,6 +20,7 @@ export function createQuietRenderPatcher(
 			tool.install();
 		},
 		refresh: () => assistant.refresh(),
+		finish: (elapsed) => assistant.finish(elapsed),
 		uninstall() {
 			assistant.uninstall();
 			tool.uninstall();
