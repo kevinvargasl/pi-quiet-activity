@@ -5,6 +5,8 @@ type AssistantRender = typeof AssistantMessageComponent.prototype.render;
 type AssistantUpdate = typeof AssistantMessageComponent.prototype.updateContent;
 type EnabledCheck = () => boolean;
 
+const ELAPSED_METADATA = Symbol.for("pi-quiet-activity.elapsed");
+
 interface RenderState {
 	originalMessage: AssistantMessage;
 	renderedMessage: AssistantMessage;
@@ -15,7 +17,13 @@ interface RenderState {
 interface RuntimeState {
 	hasToolCalls: boolean;
 	isStreaming: boolean;
+	lastMessage?: AssistantMessage;
+	[ELAPSED_METADATA]?: string;
 }
+
+type ElapsedMessage = AssistantMessage & {
+	[ELAPSED_METADATA]?: string;
+};
 
 interface RenderMethods {
 	render: AssistantRender;
@@ -26,6 +34,30 @@ interface PatchState {
 	components: Map<AssistantMessageComponent, RenderState>;
 	originals?: RenderMethods;
 	patches?: RenderMethods;
+}
+
+function getRuntimeState(component: AssistantMessageComponent): RuntimeState {
+	// SAFETY: Pi's AssistantMessageComponent owns these runtime fields; the symbol
+	// metadata is private to this extension and does not overlap Pi's properties.
+	return component as unknown as RuntimeState;
+}
+
+function getMessageElapsed(message?: AssistantMessage): string | undefined {
+	return (message as ElapsedMessage | undefined)?.[ELAPSED_METADATA];
+}
+
+function getElapsed(component: AssistantMessageComponent): string | undefined {
+	const runtime = getRuntimeState(component);
+	return runtime[ELAPSED_METADATA] ?? getMessageElapsed(runtime.lastMessage);
+}
+
+function setElapsed(
+	component: AssistantMessageComponent,
+	message: AssistantMessage,
+	elapsed: string,
+): void {
+	getRuntimeState(component)[ELAPSED_METADATA] = elapsed;
+	(message as ElapsedMessage)[ELAPSED_METADATA] = elapsed;
 }
 
 export interface AssistantRenderPatch {
@@ -49,7 +81,7 @@ function shouldHide(
 	component: AssistantMessageComponent,
 ): boolean {
 	if (!isEnabled()) return false;
-	const runtime = component as unknown as RuntimeState;
+	const runtime = getRuntimeState(component);
 	const isStreaming =
 		state.components.get(component)?.isStreaming ?? runtime.isStreaming;
 	return isStreaming || runtime.hasToolCalls;
@@ -66,7 +98,7 @@ function createPatches(
 			...args: Parameters<AssistantUpdate>
 		): void {
 			const [message, requestedStreaming] = args;
-			const runtime = this as unknown as RuntimeState;
+			const runtime = getRuntimeState(this);
 			const previous = state.components.get(this);
 			const originalMessage =
 				message === previous?.renderedMessage ? previous.originalMessage : message;
@@ -79,7 +111,7 @@ function createPatches(
 				originalMessage,
 				renderedMessage,
 				isStreaming,
-				elapsed: previous?.elapsed,
+				elapsed: previous?.elapsed ?? getElapsed(this),
 			});
 			originals.update.call(this, renderedMessage, isStreaming);
 		},
@@ -89,7 +121,7 @@ function createPatches(
 		): string[] {
 			if (shouldHide(state, isEnabled, this)) return [];
 			const lines = originals.render.call(this, ...args);
-			const elapsed = state.components.get(this)?.elapsed;
+			const elapsed = state.components.get(this)?.elapsed ?? getElapsed(this);
 			return isEnabled() && elapsed ? [elapsed, ...lines] : lines;
 		},
 	};
@@ -99,9 +131,10 @@ function finish(state: PatchState, elapsed: string): void {
 	const entries = Array.from(state.components.entries());
 	for (let index = entries.length - 1; index >= 0; index -= 1) {
 		const [component, renderState] = entries[index];
-		const runtime = component as unknown as RuntimeState;
+		const runtime = getRuntimeState(component);
 		if (renderState.isStreaming || runtime.hasToolCalls) continue;
 		renderState.elapsed = elapsed;
+		setElapsed(component, renderState.originalMessage, elapsed);
 		state.originals?.update.call(
 			component,
 			renderState.renderedMessage,

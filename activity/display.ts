@@ -21,7 +21,7 @@ export function createActivityDisplay(
 
 	function text(): string {
 		const activity = Array.from(active.values()).at(-1);
-		if (!activity) return "Working...";
+		if (!activity) return "Working";
 		return `${activity}${activity.endsWith("...") ? "" : "..."}`;
 	}
 

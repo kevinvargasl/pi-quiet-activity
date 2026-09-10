@@ -33,6 +33,7 @@ interface Harness {
 
 interface RenderFixture {
 	final: AssistantMessageComponent;
+	finalMessage: AssistantMessage;
 	process: AssistantMessageComponent;
 	tool: ToolExecutionComponent;
 }
@@ -121,7 +122,7 @@ function assertFinalResponsePrompt(harness: Harness): void {
 
 function assertActivityDisplay(harness: Harness): void {
 	emit(harness, "agent_start");
-	assert.equal(harness.state.workingMessage, "Working...");
+	assert.equal(harness.state.workingMessage, "Working");
 
 	emit(harness, "tool_execution_start", {
 		toolCallId: "read-1",
@@ -151,7 +152,7 @@ function assertActivityDisplay(harness: Harness): void {
 	assert.equal(harness.state.workingMessage, "Writing 1234.csv...");
 	emit(harness, "tool_execution_end", { toolCallId: "write-1" });
 	emit(harness, "tool_execution_end", { toolCallId: "read-1" });
-	assert.equal(harness.state.workingMessage, "Working...");
+	assert.equal(harness.state.workingMessage, "Working");
 }
 
 function assistantMessage(
@@ -215,7 +216,7 @@ function assertQuietRendering(): RenderFixture {
 		process.cwd(),
 	);
 	assert.deepEqual(tool.render(100), []);
-	return { final, process: processComponent, tool };
+	return { final, finalMessage, process: processComponent, tool };
 }
 
 function assertToggle(harness: Harness, fixture: RenderFixture): void {
@@ -233,6 +234,16 @@ function assertToggle(harness: Harness, fixture: RenderFixture): void {
 	assert.deepEqual(fixture.tool.render(100), []);
 }
 
+function assertReloadRestoresElapsed(fixture: RenderFixture): void {
+	// Pi rebuilds transcript components after shutdown and before the reloaded
+	// extension receives session_start.
+	const restoredFinal = new AssistantMessageComponent(fixture.finalMessage);
+	const reloaded = createHarness();
+	emit(reloaded, "session_start", { reason: "reload" });
+	assert.match(restoredFinal.render(100).join("\n"), /^Worked for \d+s\n/);
+	emit(reloaded, "session_shutdown", { reason: "reload" });
+}
+
 export default function smokeTest(_pi: ExtensionAPI): void {
 	initTheme();
 	assertSafeActivityLabels();
@@ -245,6 +256,8 @@ export default function smokeTest(_pi: ExtensionAPI): void {
 	emit(harness, "agent_settled");
 	assert.match(fixture.final.render(100).join("\n"), /^Worked for \d+s\n/);
 	assertToggle(harness, fixture);
-	emit(harness, "session_shutdown");
+	emit(harness, "session_shutdown", { reason: "reload" });
 	assert(fixture.tool.render(100).length > 0);
+	assert.doesNotMatch(fixture.final.render(100).join("\n"), /^Worked for /);
+	assertReloadRestoresElapsed(fixture);
 }
