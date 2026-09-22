@@ -85,9 +85,7 @@ function changeMode(
 	state.renderer.refresh();
 	state.activity.refresh(ctx);
 
-	const saved = saveMode(mode);
-	ctx.ui.notify(`Quiet activity ${mode}.`, saved ? "info" : "warning");
-	if (!saved) ctx.ui.notify(`Could not save ${CONFIG_PATH}`, "warning");
+	if (!saveMode(mode)) ctx.ui.notify(`Could not save ${CONFIG_PATH}`, "warning");
 }
 
 function toggle(state: QuietState, ctx: ExtensionContext): void {
@@ -143,14 +141,29 @@ function register(pi: ExtensionAPI, state: QuietState): void {
 	pi.on(
 		"before_agent_start",
 		(event: BeforeAgentStartEvent, ctx: ExtensionContext) => {
-			if (ctx.mode !== "tui" || state.mode.current !== "enabled") return;
-			return {
-				systemPrompt: `${event.systemPrompt}\n\n${FINAL_RESPONSE_INSTRUCTION}`,
-			};
+			const enabled = ctx.mode === "tui" && state.mode.current === "enabled";
+			// Structured sections preserve Pi's transcript-backed prompt updates and
+			// cached prefixes instead of forcing a replacement of the whole prompt.
+			const sections = event.systemPromptOptions?.sections;
+			if (sections) {
+				if (enabled) {
+					sections.quiet_activity = FINAL_RESPONSE_INSTRUCTION;
+				} else {
+					delete sections.quiet_activity;
+				}
+				return;
+			}
+			// Compatibility with Pi versions predating structured prompt options.
+			if (enabled) {
+				return {
+					systemPrompt: `${event.systemPrompt}\n\n${FINAL_RESPONSE_INSTRUCTION}`,
+				};
+			}
 		},
 	);
 	pi.on("agent_start", (_event: AgentStartEvent, ctx: ExtensionContext) => {
-		state.startedAt = Date.now();
+		// Retries and boundary-requested continuations belong to the same run.
+		state.startedAt ??= Date.now();
 		state.activity.reset(ctx);
 	});
 	pi.on(
@@ -175,6 +188,7 @@ function register(pi: ExtensionAPI, state: QuietState): void {
 		(_event: SessionShutdownEvent, ctx: ExtensionContext) => {
 			state.activity.restore(ctx);
 			state.renderer.uninstall();
+			state.startedAt = undefined;
 		},
 	);
 }

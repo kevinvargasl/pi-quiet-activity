@@ -39,7 +39,7 @@ Press:
 F9
 ```
 
-This shortcut is not assigned by Pi's default keybindings and works in Windows and macOS terminals. On a Mac keyboard configured to use the top row for media controls, press `Fn+F9`. It toggles between quiet mode and Pi's normal transcript. A brief notification reports only whether quiet activity is enabled or disabled; no permanent footer indicator is added. The setting persists across restarts in:
+This shortcut is not assigned by Pi's default keybindings and works in Windows and macOS terminals. On a Mac keyboard configured to use the top row for media controls, press `Fn+F9`. It toggles between quiet mode and Pi's normal transcript. Toggling is silent; no notification or permanent footer indicator is added. Use `/quiet-activity status` to check the mode. A warning still appears if the setting cannot be saved. The setting persists across restarts in:
 
 ```text
 ~/.pi/agent/extension-data/quiet-activity/config.json
@@ -66,7 +66,7 @@ pi install npm:pi-quiet-activity
 To pin this release:
 
 ```bash
-pi install npm:pi-quiet-activity@1.3.1
+pi install npm:pi-quiet-activity@1.3.2
 ```
 
 To try the current main branch without installing it:
@@ -80,5 +80,7 @@ Run `/reload` in an existing Pi session after installation, or restart Pi.
 ## Compatibility
 
 The extension patches Pi's exported `AssistantMessageComponent` and `ToolExecutionComponent` render methods for the current TUI session. It restores the original methods during session shutdown/reload.
+
+Tested with Pi 0.87.0. On recent Pi versions, the final-response instruction uses a structured prompt section so Pi can preserve cached prefixes when updating instructions (where supported by the model). Older versions without structured sections retain the previous prompt fallback. Elapsed time spans automatic retries and continuations until `agent_settled`.
 
 Renderer extensions that patch the same component prototypes may conflict. Turning quiet mode off restores normal rendering through whatever renderer was active when this extension loaded.

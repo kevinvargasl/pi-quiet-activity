@@ -13,7 +13,7 @@ import quietActivity from "../index.ts";
 type EventHandler = (event: unknown, ctx: TestContext) => unknown;
 
 interface TestContext {
-	mode: "tui";
+	mode: "tui" | "rpc" | "json" | "print";
 	ui: {
 		theme: { fg(name: string, text: string): string };
 		setWorkingMessage(message?: string): void;
@@ -29,6 +29,7 @@ interface Harness {
 	events: Map<string, EventHandler>;
 	state: { notification?: string; workingMessage?: string };
 	toggle: (ctx: TestContext) => void;
+	command: (args: string, ctx: TestContext) => Promise<void>;
 }
 
 interface RenderFixture {
@@ -43,12 +44,15 @@ function createHarness(): Harness {
 	const state: Harness["state"] = {};
 	let shortcutKey: string | undefined;
 	let toggle: Harness["toggle"] | undefined;
+	let command: Harness["command"] | undefined;
 	const fakePi = {
 		registerShortcut(key: string, options: { handler: Harness["toggle"] }) {
 			shortcutKey = key;
 			toggle = options.handler;
 		},
-		registerCommand() {},
+		registerCommand(_name: string, options: { handler: Harness["command"] }) {
+			command = options.handler;
+		},
 		on(name: string, handler: EventHandler) {
 			events.set(name, handler);
 		},
@@ -74,7 +78,8 @@ function createHarness(): Harness {
 	quietActivity(fakePi);
 	assert.equal(shortcutKey, "f9");
 	assert(toggle);
-	return { ctx, events, state, toggle };
+	assert(command);
+	return { ctx, events, state, toggle, command };
 }
 
 function emit(harness: Harness, name: string, event: unknown = {}): unknown {
@@ -118,6 +123,26 @@ function assertFinalResponsePrompt(harness: Harness): void {
 	assert.match(result.systemPrompt, /^base prompt\n\n/);
 	assert.match(result.systemPrompt, /self-contained final response/);
 	assert.match(result.systemPrompt, /earlier tool-calling turns/);
+
+	const event = {
+		systemPrompt: "base prompt",
+		systemPromptOptions: { sections: { another_extension: "Keep me" } as Record<string, string> },
+	};
+	assert.equal(emit(harness, "before_agent_start", event), undefined);
+	assert.equal(event.systemPrompt, "base prompt");
+	assert.equal(event.systemPromptOptions.sections.another_extension, "Keep me");
+	assert.match(event.systemPromptOptions.sections.quiet_activity!, /self-contained final response/);
+	const sections = { ...event.systemPromptOptions.sections };
+	emit(harness, "before_agent_start", event);
+	assert.deepEqual(event.systemPromptOptions.sections, sections);
+
+	for (const mode of ["rpc", "json", "print"] as const) {
+		harness.ctx.mode = mode;
+		emit(harness, "before_agent_start", event);
+		assert.deepEqual(event.systemPromptOptions.sections, { another_extension: "Keep me" });
+		assert.equal(emit(harness, "before_agent_start", { systemPrompt: "base" }), undefined);
+	}
+	harness.ctx.mode = "tui";
 }
 
 function assertActivityDisplay(harness: Harness): void {
@@ -221,7 +246,12 @@ function assertQuietRendering(): RenderFixture {
 
 function assertToggle(harness: Harness, fixture: RenderFixture): void {
 	harness.toggle(harness.ctx);
-	assert.equal(harness.state.notification, "Quiet activity disabled.");
+	assert.equal(harness.state.notification, undefined);
+	const event = {
+		systemPromptOptions: { sections: { quiet_activity: "old instruction", other: "Keep" } },
+	};
+	assert.equal(emit(harness, "before_agent_start", event), undefined);
+	assert.deepEqual(event.systemPromptOptions.sections, { other: "Keep" });
 	assert.equal(
 		emit(harness, "before_agent_start", { systemPrompt: "base prompt" }),
 		undefined,
@@ -230,8 +260,15 @@ function assertToggle(harness: Harness, fixture: RenderFixture): void {
 	assert(fixture.tool.render(100).length > 0);
 
 	harness.toggle(harness.ctx);
-	assert.equal(harness.state.notification, "Quiet activity enabled.");
+	assert.equal(harness.state.notification, undefined);
 	assert.deepEqual(fixture.tool.render(100), []);
+
+	for (const args of ["off", "on", "toggle", ""]) {
+		void harness.command(args, harness.ctx);
+		assert.equal(harness.state.notification, undefined);
+	}
+	void harness.command("status", harness.ctx);
+	assert.match(harness.state.notification!, /Quiet activity is enabled/);
 }
 
 function assertReloadRestoresElapsed(fixture: RenderFixture): void {
@@ -240,7 +277,7 @@ function assertReloadRestoresElapsed(fixture: RenderFixture): void {
 	const restoredFinal = new AssistantMessageComponent(fixture.finalMessage);
 	const reloaded = createHarness();
 	emit(reloaded, "session_start", { reason: "reload" });
-	assert.match(restoredFinal.render(100).join("\n"), /^Worked for \d+s\n/);
+	assert.match(restoredFinal.render(100).join("\n"), /^Worked for 1m 23s\n/);
 	emit(reloaded, "session_shutdown", { reason: "reload" });
 }
 
@@ -253,8 +290,16 @@ export default function smokeTest(_pi: ExtensionAPI): void {
 	assertActivityDisplay(harness);
 	assertFinalResponsePrompt(harness);
 	const fixture = assertQuietRendering();
-	emit(harness, "agent_settled");
-	assert.match(fixture.final.render(100).join("\n"), /^Worked for \d+s\n/);
+	const now = Date.now;
+	try {
+		Date.now = () => now() + 83_000;
+		// Pi can start another low-level run before the final settled event.
+		emit(harness, "agent_start");
+		emit(harness, "agent_settled");
+		assert.match(fixture.final.render(100).join("\n"), /^Worked for 1m 23s\n/);
+	} finally {
+		Date.now = now;
+	}
 	assertToggle(harness, fixture);
 	emit(harness, "session_shutdown", { reason: "reload" });
 	assert(fixture.tool.render(100).length > 0);
