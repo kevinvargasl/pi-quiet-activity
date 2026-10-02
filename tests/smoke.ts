@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
-import type { AssistantMessage } from "../node_modules/@earendil-works/pi-ai/dist/types.d.ts";
-import type { ExtensionAPI } from "../node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { mock } from "node:test";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	AssistantMessageComponent,
 	initTheme,
@@ -146,6 +149,8 @@ function assertFinalResponsePrompt(harness: Harness): void {
 }
 
 function assertActivityDisplay(harness: Harness): void {
+	// Labels without the optional timer retain their previous format.
+	void harness.command("timer off", harness.ctx);
 	emit(harness, "agent_start");
 	assert.equal(harness.state.workingMessage, "Working");
 
@@ -178,6 +183,94 @@ function assertActivityDisplay(harness: Harness): void {
 	emit(harness, "tool_execution_end", { toolCallId: "write-1" });
 	emit(harness, "tool_execution_end", { toolCallId: "read-1" });
 	assert.equal(harness.state.workingMessage, "Working");
+	void harness.command("timer on", harness.ctx);
+}
+
+function assertLiveTimer(): void {
+	mock.timers.enable({ apis: ["Date", "setInterval"], now: 1000 });
+	const harness = createHarness();
+	const configPath = join(
+		process.env.PI_CODING_AGENT_DIR!,
+		"extension-data",
+		"quiet-activity",
+		"config.json",
+	);
+	const config = () => JSON.parse(readFileSync(configPath, "utf8"));
+	let updates = 0;
+	const setWorkingMessage = harness.ctx.ui.setWorkingMessage;
+	harness.ctx.ui.setWorkingMessage = (message) => {
+		updates += 1;
+		setWorkingMessage(message);
+	};
+	function tickWithoutUpdates(ms: number): void {
+		const previous = updates;
+		mock.timers.tick(ms);
+		assert.equal(updates, previous, "stopped timers must not update the UI");
+	}
+	try {
+		emit(harness, "session_start");
+		assert.equal(harness.state.workingMessage, "Working");
+		tickWithoutUpdates(1000);
+		assert.equal(harness.state.workingMessage, "Working");
+		emit(harness, "agent_start");
+		assert.equal(harness.state.workingMessage, "(0s) Working");
+		mock.timers.tick(2000);
+		assert.equal(harness.state.workingMessage, "(2s) Working");
+		emit(harness, "tool_execution_start", {
+			toolCallId: "read-timer",
+			toolName: "read",
+			args: { path: "abc.ts" },
+		});
+		mock.timers.tick(1000);
+		assert.equal(harness.state.workingMessage, "(3s) Reading abc.ts...");
+		emit(harness, "tool_execution_end", { toolCallId: "read-timer" });
+		assert.equal(harness.state.workingMessage, "(3s) Working");
+		emit(harness, "agent_start");
+		mock.timers.tick(1000);
+		assert.equal(harness.state.workingMessage, "(4s) Working");
+
+		void harness.command("timer off", harness.ctx);
+		assert.equal(config().timerEnabled, false);
+		assert.equal(config().enabled, true);
+		assert.equal(harness.state.workingMessage, "Working");
+		tickWithoutUpdates(1000);
+		assert.equal(harness.state.workingMessage, "Working");
+		const reloaded = createHarness();
+		void reloaded.command("timer status", reloaded.ctx);
+		assert.match(reloaded.state.notification!, /timer is off/);
+		void harness.command("off", harness.ctx);
+		assert.equal(config().timerEnabled, false);
+		void harness.command("on", harness.ctx);
+		assert.equal(harness.state.workingMessage, "Working");
+		void harness.command("timer", harness.ctx);
+		assert.equal(harness.state.workingMessage, "(5s) Working");
+		assert.equal(config().timerEnabled, true);
+		void harness.command("timer toggle", harness.ctx);
+		assert.equal(harness.state.workingMessage, "Working");
+		void harness.command("timer on", harness.ctx);
+		void harness.command("off", harness.ctx);
+		tickWithoutUpdates(1000);
+		assert.equal(harness.state.workingMessage, undefined);
+		void harness.command("on", harness.ctx);
+		assert.equal(harness.state.workingMessage, "(6s) Working");
+		void harness.command("timer invalid", harness.ctx);
+		assert.match(harness.state.notification!, /Usage:/);
+		assert.equal(config().timerEnabled, true);
+
+		emit(harness, "agent_settled");
+		tickWithoutUpdates(2000);
+		assert.equal(harness.state.workingMessage, undefined);
+		emit(harness, "agent_start");
+		assert.equal(harness.state.workingMessage, "(0s) Working");
+		mock.timers.tick(83_000);
+		assert.equal(harness.state.workingMessage, "(1m 23s) Working");
+		emit(harness, "session_shutdown");
+		tickWithoutUpdates(2000);
+		assert.equal(harness.state.workingMessage, undefined);
+	} finally {
+		emit(harness, "session_shutdown");
+		mock.timers.reset();
+	}
 }
 
 function assistantMessage(
@@ -225,7 +318,23 @@ function assertQuietRendering(): RenderFixture {
 	assert.match(finalRendered, /full response first paragraph/);
 	assert.match(finalRendered, /final answer/);
 	assert.doesNotMatch(finalRendered, /secret process/);
+	// Pi 1.0 rebuilds content on invalidation, thinking visibility, and padding
+	// changes. Quiet mode must keep the original message for normal rendering.
+	for (const padding of [0, 1]) {
+		final.setOutputPad(padding);
+		for (const hideThinking of [true, false]) {
+			final.setHideThinkingBlock(hideThinking);
+			final.invalidate();
+			for (const width of [24, 100]) {
+				const rendered = final.render(width).join("\n");
+				assert.match(rendered, /final answer/);
+				assert.doesNotMatch(rendered, /secret process|Thinking\.\.\./);
+			}
+		}
+	}
+	assert(finalMessage.content.some((part) => part.type === "thinking"));
 	final.updateContent(finalMessage, true);
+	final.invalidate();
 	assert.deepEqual(final.render(100), []);
 	final.updateContent(finalMessage, false);
 
@@ -258,6 +367,7 @@ function assertToggle(harness: Harness, fixture: RenderFixture): void {
 	);
 	assert(fixture.process.render(100).length > 0);
 	assert(fixture.tool.render(100).length > 0);
+	assert.match(fixture.final.render(100).join("\n"), /secret process/);
 
 	harness.toggle(harness.ctx);
 	assert.equal(harness.state.notification, undefined);
@@ -281,10 +391,42 @@ function assertReloadRestoresElapsed(fixture: RenderFixture): void {
 	emit(reloaded, "session_shutdown", { reason: "reload" });
 }
 
+function assertNonTuiLifecycle(): void {
+	const originalRender = AssistantMessageComponent.prototype.render;
+	const originalUpdate = AssistantMessageComponent.prototype.updateContent;
+	const originalToolRender = ToolExecutionComponent.prototype.render;
+
+	for (const mode of ["rpc", "json", "print"] as const) {
+		const harness = createHarness();
+		harness.ctx.mode = mode;
+		harness.ctx.ui.setWorkingMessage = () => {
+			throw new Error(`must not change the working indicator in ${mode} mode`);
+		};
+		harness.ctx.ui.setWorkingVisible = () => {
+			throw new Error(`must not change the working indicator in ${mode} mode`);
+		};
+		emit(harness, "session_start");
+		emit(harness, "agent_start");
+		emit(harness, "tool_execution_start", {
+			toolCallId: "read-1",
+			toolName: "read",
+			args: { path: "abc.ts" },
+		});
+		emit(harness, "tool_execution_end", { toolCallId: "read-1" });
+		emit(harness, "agent_settled");
+		assert.equal(AssistantMessageComponent.prototype.render, originalRender);
+		assert.equal(AssistantMessageComponent.prototype.updateContent, originalUpdate);
+		assert.equal(ToolExecutionComponent.prototype.render, originalToolRender);
+		emit(harness, "session_shutdown");
+	}
+}
+
 export default function smokeTest(_pi: ExtensionAPI): void {
 	initTheme();
+	assertNonTuiLifecycle();
 	assertSafeActivityLabels();
 	assertElapsedTimeFormatting();
+	assertLiveTimer();
 	const harness = createHarness();
 	emit(harness, "session_start");
 	assertActivityDisplay(harness);
