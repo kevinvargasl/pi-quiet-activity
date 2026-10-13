@@ -1,4 +1,5 @@
 import type {
+	AgentSettledEvent,
 	AgentStartEvent,
 	BeforeAgentStartEvent,
 	ExtensionAPI,
@@ -231,12 +232,15 @@ function register(pi: ExtensionAPI, state: QuietState): void {
 		(event: ToolExecutionEndEvent, ctx: ExtensionContext) =>
 			state.activity.end(event, ctx),
 	);
-	pi.on("agent_settled", (_event, ctx) => {
+	pi.on("agent_settled", (event: AgentSettledEvent, ctx: ExtensionContext) => {
 		state.activity.clear(ctx);
-		if (state.startedAt === undefined) return;
-		const elapsed = formatElapsedTime(Date.now() - state.startedAt);
-		state.renderer.finish(ctx.ui.theme.fg("dim", `Worked for ${elapsed}`));
+		const startedAt = state.startedAt;
 		state.startedAt = undefined;
+		// Pi 1.1+ distinguishes cancellation from successful settlement. An
+		// aborted run may have no new final component; never annotate an old answer.
+		if (startedAt === undefined || ctx.mode !== "tui" || event.aborted) return;
+		const elapsed = formatElapsedTime(Date.now() - startedAt);
+		state.renderer.finish(ctx.ui.theme.fg("dim", `Worked for ${elapsed}`));
 	});
 	pi.on(
 		"session_shutdown",

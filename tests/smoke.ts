@@ -111,6 +111,22 @@ function assertSafeActivityLabels(): void {
 		toolActivityLabel("mcp", { tool: "context7_resolve_library_id" }),
 		"Calling MCP context7_resolve_library_id",
 	);
+	assert.equal(
+		toolActivityLabel("mcp__context7__resolve-library-id", {}),
+		"Calling MCP context7/resolve-library-id",
+	);
+	assert.equal(toolActivityLabel("mcp__docs__search__all", {}), "Calling MCP docs/search__all");
+	assert.equal(toolActivityLabel("mcp__", {}), "Calling mcp__");
+	assert.equal(toolActivityLabel("codemode", "text('secret script')"), "Running a script");
+	assert.equal(toolActivityLabel("codemode", { code: "secret script" }), "Running a script");
+	assert.equal(toolActivityLabel("tool_search", { query: "database" }), "Finding tools for database");
+	assert.equal(toolActivityLabel("tool_search", {}), "Finding tools");
+	assert.equal(toolActivityLabel("ls", { path: "src" }), "Listing src");
+	assert.equal(toolActivityLabel("powershell", { command: "Get-ChildItem" }), "Running Get-ChildItem");
+	assert.doesNotMatch(
+		toolActivityLabel("powershell", { command: "curl --token supersecret\u001b[2J" }),
+		/supersecret|\u001b/,
+	);
 }
 
 function assertElapsedTimeFormatting(): void {
@@ -138,6 +154,23 @@ function assertFinalResponsePrompt(harness: Harness): void {
 	const sections = { ...event.systemPromptOptions.sections };
 	emit(harness, "before_agent_start", event);
 	assert.deepEqual(event.systemPromptOptions.sections, sections);
+
+	// Pi 1.2 sends both user prompts and extension-triggered custom messages
+	// through before_agent_start. Neither should lose the quiet instruction.
+	for (const starter of [
+		{ messageType: "user", prompt: "Do this", images: undefined },
+		{ messageType: "custom", message: { role: "custom", customType: "test", content: "Continue" } },
+	]) {
+		const triggered = {
+			...starter,
+			systemPrompt: "base prompt",
+			systemPromptOptions: { sections: { other: "Keep me" } as Record<string, string> },
+		};
+		assert.equal(emit(harness, "before_agent_start", triggered), undefined);
+		assert.match(triggered.systemPromptOptions.sections.quiet_activity!, /self-contained final response/);
+		assert.equal(triggered.systemPromptOptions.sections.other, "Keep me");
+		assert.equal(triggered.systemPrompt, "base prompt");
+	}
 
 	for (const mode of ["rpc", "json", "print"] as const) {
 		harness.ctx.mode = mode;
@@ -182,6 +215,27 @@ function assertActivityDisplay(harness: Harness): void {
 	assert.equal(harness.state.workingMessage, "Writing 1234.csv...");
 	emit(harness, "tool_execution_end", { toolCallId: "write-1" });
 	emit(harness, "tool_execution_end", { toolCallId: "read-1" });
+	assert.equal(harness.state.workingMessage, "Working");
+
+	// Nested codemode calls emit ordinary execution events with a parent id.
+	// Their completion must restore the parent label, not clear the activity.
+	emit(harness, "tool_execution_start", {
+		toolCallId: "script-1", toolName: "codemode", args: "await tools.read({path: 'abc.ts'})",
+	});
+	assert.equal(harness.state.workingMessage, "Running a script...");
+	emit(harness, "tool_execution_start", {
+		toolCallId: "script-1/1", parentToolCallId: "script-1", toolName: "read", args: { path: "abc.ts" },
+	});
+	assert.equal(harness.state.workingMessage, "Reading abc.ts...");
+	emit(harness, "tool_execution_start", {
+		toolCallId: "script-1/2", parentToolCallId: "script-1", toolName: "mcp__docs__search", args: {},
+	});
+	assert.equal(harness.state.workingMessage, "Calling MCP docs/search...");
+	emit(harness, "tool_execution_end", { toolCallId: "script-1/2", parentToolCallId: "script-1", durationMs: 200 });
+	assert.equal(harness.state.workingMessage, "Reading abc.ts...");
+	emit(harness, "tool_execution_end", { toolCallId: "script-1/1", parentToolCallId: "script-1", durationMs: 300 });
+	assert.equal(harness.state.workingMessage, "Running a script...");
+	emit(harness, "tool_execution_end", { toolCallId: "script-1", durationMs: 500 });
 	assert.equal(harness.state.workingMessage, "Working");
 	void harness.command("timer on", harness.ctx);
 }
@@ -267,6 +321,50 @@ function assertLiveTimer(): void {
 		emit(harness, "session_shutdown");
 		tickWithoutUpdates(2000);
 		assert.equal(harness.state.workingMessage, undefined);
+	} finally {
+		emit(harness, "session_shutdown");
+		mock.timers.reset();
+	}
+}
+
+function assertCancelledRun(): void {
+	mock.timers.enable({ apis: ["Date", "setInterval"], now: 1000 });
+	const harness = createHarness();
+	try {
+		emit(harness, "session_start");
+		emit(harness, "agent_start");
+		const previous = new AssistantMessageComponent(assistantMessage([{ type: "text", text: "Previous answer" }], "stop"));
+		mock.timers.tick(2000);
+		emit(harness, "agent_settled", { aborted: false });
+		const previousLines = previous.render(100);
+		assert.match(previousLines.join("\n"), /^Worked for 2s\n/);
+
+		// Escape during a tool call or before a new assistant message exists.
+		emit(harness, "agent_start");
+		emit(harness, "tool_execution_start", { toolCallId: "cancelled", toolName: "codemode", args: "secret script" });
+		mock.timers.tick(5000);
+		emit(harness, "agent_settled", { aborted: true });
+		assert.deepEqual(previous.render(100), previousLines, "cancellation must not overwrite the previous answer's elapsed time");
+		assert.equal(harness.state.workingMessage, undefined);
+		const setWorkingMessage = harness.ctx.ui.setWorkingMessage;
+		harness.ctx.ui.setWorkingMessage = () => { throw new Error("cancelled timer must stop"); };
+		mock.timers.tick(2000);
+		harness.ctx.ui.setWorkingMessage = setWorkingMessage;
+
+		// A new run resets the timer, and Pi's own cancellation notice survives.
+		emit(harness, "agent_start");
+		assert.equal(harness.state.workingMessage, "(0s) Working");
+		const cancelled = new AssistantMessageComponent(assistantMessage([], "aborted"));
+		mock.timers.tick(1000);
+		emit(harness, "agent_settled", { aborted: true });
+		assert.match(cancelled.render(100).join("\n"), /Operation aborted/);
+		assert.doesNotMatch(cancelled.render(100).join("\n"), /Worked for/);
+		emit(harness, "agent_start");
+		const next = new AssistantMessageComponent(assistantMessage([{ type: "text", text: "Next answer" }], "stop"));
+		mock.timers.tick(3000);
+		emit(harness, "agent_settled", { aborted: false });
+		assert.match(next.render(100).join("\n"), /^Worked for 3s\n/);
+		assert.deepEqual(previous.render(100), previousLines);
 	} finally {
 		emit(harness, "session_shutdown");
 		mock.timers.reset();
@@ -399,6 +497,9 @@ function assertNonTuiLifecycle(): void {
 	for (const mode of ["rpc", "json", "print"] as const) {
 		const harness = createHarness();
 		harness.ctx.mode = mode;
+		harness.ctx.ui.theme.fg = () => {
+			throw new Error(`must not style terminal output in ${mode} mode`);
+		};
 		harness.ctx.ui.setWorkingMessage = () => {
 			throw new Error(`must not change the working indicator in ${mode} mode`);
 		};
@@ -427,6 +528,7 @@ export default function smokeTest(_pi: ExtensionAPI): void {
 	assertSafeActivityLabels();
 	assertElapsedTimeFormatting();
 	assertLiveTimer();
+	assertCancelledRun();
 	const harness = createHarness();
 	emit(harness, "session_start");
 	assertActivityDisplay(harness);

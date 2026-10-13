@@ -34,6 +34,13 @@ const ACTIVITY_SPECS: Record<string, ActivitySpec> = {
 		keys: ["path", "file"],
 	},
 	bash: { action: "Running", fallback: "Running a command", keys: ["command"] },
+	powershell: { action: "Running", fallback: "Running a command", keys: ["command"] },
+	ls: { action: "Listing", fallback: "Listing files", keys: ["path"] },
+	tool_search: {
+		action: "Finding tools for",
+		fallback: "Finding tools",
+		keys: ["query"],
+	},
 	grep: {
 		action: "Searching files for",
 		fallback: "Searching files",
@@ -72,6 +79,7 @@ const ACTIVITY_SPECS: Record<string, ActivitySpec> = {
 };
 
 const STATIC_LABELS: Record<string, string> = {
+	codemode: "Running a script",
 	get_search_content: "Reading search results",
 	todo: "Updating tasks",
 	ask_user_question: "Preparing a question",
@@ -146,6 +154,11 @@ export function toolActivityLabel(toolName: string, rawArgs: unknown): string {
 	const spec = ACTIVITY_SPECS[name];
 	if (spec) return formatSpec(spec, args);
 
+	if (name.startsWith("mcp__")) {
+		const [, server, ...parts] = toolName.split("__");
+		const tool = parts.join("__");
+		if (server && tool) return `Calling MCP ${shorten(`${server}/${tool}`)}`;
+	}
 	if (name.startsWith("mcp_")) {
 		const target = findDetail(args, ["tool", "toolName", "name"]);
 		return target ? `Calling ${target}` : `Calling ${shorten(toolName)}`;
