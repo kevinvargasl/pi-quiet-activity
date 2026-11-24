@@ -25,6 +25,8 @@ The TUI hides:
 - all built-in and extension tool calls/results
 - the final answer while it is still streaming
 
+With [live view](#live-view) on, the current run shows these while the agent works and hides them when the run completes.
+
 When the agent settles, the working line disappears and a compact elapsed time appears in dimmed text before the finalized answer, such as `Worked for 45s`, `Worked for 1m 23s`, or `Worked for 2h 12m`. On Pi 1.1 or newer, cancelling a run stops the timer without adding a completion line or changing an earlier answer's elapsed time. Pi's own cancellation notice remains visible when present. The extension does not add anything to the footer.
 
 ![Elapsed time displayed before the final answer](https://raw.githubusercontent.com/kevinvargasl/pi-quiet-activity/main/assets/elapsed-time-message.png)
@@ -82,11 +84,30 @@ Control the timer independently of quiet mode:
 ```json
 {
   "enabled": true,
-  "timerEnabled": true
+  "timerEnabled": true,
+  "liveEnabled": false
 }
 ```
 
-Existing configs without `timerEnabled` default to having the timer on. Turning it off removes only the live prefix, leaving labels such as `Working` and `Reading src/index.ts...`. The final `Worked for …` line is unchanged. Normal mode (F9 off) keeps Pi's default working message. `/quiet-activity status` reports both the quiet-mode and timer settings.
+Existing configs without `timerEnabled` default to having the timer on. Turning it off removes only the live prefix, leaving labels such as `Working` and `Reading src/index.ts...`. The final `Worked for …` line is unchanged. Normal mode (F9 off) keeps Pi's default working message. `/quiet-activity status` reports quiet mode, the timer, and live view.
+
+## Live view
+
+Live view shows the current run while the agent works and hides it again when the run completes. It is **off by default**:
+
+```text
+/quiet-activity live
+/quiet-activity live on
+/quiet-activity live off
+/quiet-activity live toggle
+/quiet-activity live status
+```
+
+While a run is active, its thinking, narration, tool calls, and the streaming final answer render as they do in Pi's normal transcript, so `Ctrl+T` and `Ctrl+O` apply to them. Earlier runs stay hidden. When the run completes, everything except the final answer is hidden again, and the `Worked for …` line marks the folded run. A run cancelled with Escape or ended by an error stays expanded until a later run completes, then folds with it.
+
+The setting is saved as `liveEnabled` in the same config file. F9 still switches between quiet mode and Pi's normal transcript, which shows earlier runs.
+
+Folding a run removes lines above the final answer, so the screen shifts when a run completes. In regular mode (`"tuiMode": "regular"`), if those lines have already scrolled into terminal scrollback, Pi clears the screen and scrollback and reprints the transcript.
 
 ## Installation
 
@@ -140,4 +161,4 @@ npm test
 npm run typecheck
 ```
 
-Development dependencies pin Pi 1.2.0 for reproducible compatibility checks; published peer dependencies remain host-provided. The smoke tests cover rendering, content invalidation, toggling, user/custom-run prompt sections, native MCP and nested codemode activity, live timer updates and persistence, elapsed time across retries, cancellation without stale-answer changes, timer cleanup on settle/reload, and non-TUI lifecycle handling.
+Development dependencies pin Pi 1.2.0 for reproducible compatibility checks; published peer dependencies remain host-provided. The smoke tests cover rendering, content invalidation, toggling, user/custom-run prompt sections, native MCP and nested codemode activity, live timer updates and persistence, live view folding (including cancelled and failed runs), elapsed time across retries, cancellation without stale-answer changes, timer cleanup on settle/reload, and non-TUI lifecycle handling.

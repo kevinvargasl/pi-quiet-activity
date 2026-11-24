@@ -1,4 +1,5 @@
 import type {
+	AgentEndEvent,
 	AgentSettledEvent,
 	AgentStartEvent,
 	BeforeAgentStartEvent,
@@ -34,27 +35,43 @@ const CONFIG_PATH = join(
 );
 
 type QuietMode = "enabled" | "disabled";
+type QuietOption = "timer" | "live";
+
+const OPTION_LABELS: Record<QuietOption, string> = {
+	timer: "timer",
+	live: "live view",
+};
 
 interface QuietState {
 	mode: { current: QuietMode };
 	timer: { enabled: boolean };
+	live: { enabled: boolean };
 	activity: ActivityDisplay;
 	renderer: QuietRenderPatcher;
 	startedAt?: number;
+	runFailed: boolean;
 }
 
-function loadSettings(): { mode: QuietMode; timerEnabled: boolean } {
+interface Settings {
+	mode: QuietMode;
+	timerEnabled: boolean;
+	liveEnabled: boolean;
+}
+
+function loadSettings(): Settings {
 	try {
 		const config = JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as {
 			enabled?: unknown;
 			timerEnabled?: unknown;
+			liveEnabled?: unknown;
 		};
 		return {
 			mode: config.enabled === false ? "disabled" : "enabled",
 			timerEnabled: config.timerEnabled !== false,
+			liveEnabled: config.liveEnabled === true,
 		};
 	} catch {
-		return { mode: "enabled", timerEnabled: true };
+		return { mode: "enabled", timerEnabled: true, liveEnabled: false };
 	}
 }
 
@@ -64,6 +81,7 @@ function saveSettings(state: QuietState): boolean {
 		const settings = {
 			enabled: state.mode.current === "enabled",
 			timerEnabled: state.timer.enabled,
+			liveEnabled: state.live.enabled,
 		};
 		writeFileSync(
 			CONFIG_PATH,
@@ -80,13 +98,25 @@ function createState(): QuietState {
 	const settings = loadSettings();
 	const mode = { current: settings.mode };
 	const timer = { enabled: settings.timerEnabled };
+	const live = { enabled: settings.liveEnabled };
 	const isEnabled = () => mode.current === "enabled";
 	return {
 		mode,
 		timer,
+		live,
 		activity: createActivityDisplay(isEnabled, () => timer.enabled),
-		renderer: createQuietRenderPatcher(isEnabled),
+		renderer: createQuietRenderPatcher(isEnabled, () => live.enabled),
+		runFailed: false,
 	};
+}
+
+function applySettings(state: QuietState, ctx: ExtensionContext): void {
+	state.renderer.refresh();
+	state.activity.refresh(ctx);
+
+	if (!saveSettings(state)) {
+		ctx.ui.notify(`Could not save ${CONFIG_PATH}`, "warning");
+	}
 }
 
 function changeMode(
@@ -95,12 +125,7 @@ function changeMode(
 	ctx: ExtensionContext,
 ): void {
 	state.mode.current = mode;
-	state.renderer.refresh();
-	state.activity.refresh(ctx);
-
-	if (!saveSettings(state)) {
-		ctx.ui.notify(`Could not save ${CONFIG_PATH}`, "warning");
-	}
+	applySettings(state, ctx);
 }
 
 function toggle(state: QuietState, ctx: ExtensionContext): void {
@@ -117,14 +142,15 @@ function handleCommand(
 	ctx: ExtensionContext,
 ): void {
 	const command = args.trim().toLowerCase();
-	if (command === "timer" || command.startsWith("timer ")) {
-		handleTimerCommand(state, command.slice(5).trim(), ctx);
+	const [name, ...rest] = command.split(/\s+/);
+	if (name === "timer" || name === "live") {
+		handleOptionCommand(state, name, rest.join(" "), ctx);
 		return;
 	}
 	switch (command || "toggle") {
 		case "status":
 			ctx.ui.notify(
-				`Quiet activity is ${state.mode.current}. Timer is ${state.timer.enabled ? "on" : "off"}. Toggle: ${SHORTCUT}`,
+				`Quiet activity is ${state.mode.current}. Timer is ${onOff(state.timer)}. Live view is ${onOff(state.live)}. Toggle: ${SHORTCUT}`,
 			);
 			return;
 		case "on":
@@ -138,43 +164,46 @@ function handleCommand(
 			return;
 		default:
 			ctx.ui.notify(
-				"Usage: /quiet-activity [on|off|toggle|status|timer [on|off|toggle|status]]",
+				"Usage: /quiet-activity [on|off|toggle|status], or /quiet-activity [timer|live] [on|off|toggle|status]",
 				"warning",
 			);
 	}
 }
 
-function handleTimerCommand(
+function onOff(option: { enabled: boolean }): string {
+	return option.enabled ? "on" : "off";
+}
+
+function handleOptionCommand(
 	state: QuietState,
+	name: QuietOption,
 	args: string,
 	ctx: ExtensionContext,
 ): void {
+	const option = state[name];
 	switch (args || "toggle") {
 		case "status":
 			ctx.ui.notify(
-				`Quiet activity timer is ${state.timer.enabled ? "on" : "off"}.`,
+				`Quiet activity ${OPTION_LABELS[name]} is ${onOff(option)}.`,
 			);
 			return;
 		case "on":
-			state.timer.enabled = true;
+			option.enabled = true;
 			break;
 		case "off":
-			state.timer.enabled = false;
+			option.enabled = false;
 			break;
 		case "toggle":
-			state.timer.enabled = !state.timer.enabled;
+			option.enabled = !option.enabled;
 			break;
 		default:
 			ctx.ui.notify(
-				"Usage: /quiet-activity timer [on|off|toggle|status]",
+				`Usage: /quiet-activity ${name} [on|off|toggle|status]`,
 				"warning",
 			);
 			return;
 	}
-	state.activity.refresh(ctx);
-	if (!saveSettings(state)) {
-		ctx.ui.notify(`Could not save ${CONFIG_PATH}`, "warning");
-	}
+	applySettings(state, ctx);
 }
 
 function register(pi: ExtensionAPI, state: QuietState): void {
@@ -184,7 +213,7 @@ function register(pi: ExtensionAPI, state: QuietState): void {
 	});
 	pi.registerCommand("quiet-activity", {
 		description:
-			"Control quiet display or live timer: on, off, toggle, or status",
+			"Control quiet display, its timer, or live view: on, off, toggle, or status",
 		handler: (args: string, ctx: ExtensionCommandContext): Promise<void> => {
 			handleCommand(state, args, ctx);
 			return Promise.resolve();
@@ -220,7 +249,13 @@ function register(pi: ExtensionAPI, state: QuietState): void {
 	pi.on("agent_start", (_event: AgentStartEvent, ctx: ExtensionContext) => {
 		// Retries and boundary-requested continuations belong to the same run.
 		state.startedAt ??= Date.now();
+		state.renderer.startRun(state.startedAt);
 		state.activity.reset(ctx, state.startedAt);
+	});
+	pi.on("agent_end", (event: AgentEndEvent) => {
+		// Each retry attempt ends with agent_end; the last one before settling counts.
+		const last = event.messages.at(-1);
+		state.runFailed = last?.role === "assistant" && last.stopReason === "error";
 	});
 	pi.on(
 		"tool_execution_start",
@@ -238,9 +273,16 @@ function register(pi: ExtensionAPI, state: QuietState): void {
 		state.startedAt = undefined;
 		// Pi 1.1+ distinguishes cancellation from successful settlement. An
 		// aborted run may have no new final component; never annotate an old answer.
-		if (startedAt === undefined || ctx.mode !== "tui" || event.aborted) return;
-		const elapsed = formatElapsedTime(Date.now() - startedAt);
-		state.renderer.finish(ctx.ui.theme.fg("dim", `Worked for ${elapsed}`));
+		// Cancelled and failed runs also stay expanded in live view until the next
+		// run completes.
+		if (ctx.mode !== "tui" || event.aborted) return;
+		if (!state.runFailed) state.renderer.foldRun();
+		if (startedAt !== undefined) {
+			const elapsed = formatElapsedTime(Date.now() - startedAt);
+			state.renderer.finish(ctx.ui.theme.fg("dim", `Worked for ${elapsed}`));
+		}
+		// Pi does not repaint after agent_settled; this requests a render while idle.
+		ctx.ui.setWorkingVisible(true);
 	});
 	pi.on(
 		"session_shutdown",
@@ -248,6 +290,7 @@ function register(pi: ExtensionAPI, state: QuietState): void {
 			state.activity.restore(ctx);
 			state.renderer.uninstall();
 			state.startedAt = undefined;
+			state.runFailed = false;
 		},
 	);
 }

@@ -1,5 +1,6 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { AssistantMessageComponent } from "@earendil-works/pi-coding-agent";
+import type { LiveRun } from "./live.ts";
 
 type AssistantRender = typeof AssistantMessageComponent.prototype.render;
 type AssistantUpdate = typeof AssistantMessageComponent.prototype.updateContent;
@@ -75,21 +76,35 @@ function removeThinking(message: AssistantMessage): AssistantMessage {
 	};
 }
 
+function renderMessage(
+	isEnabled: EnabledCheck,
+	live: LiveRun,
+	message: AssistantMessage,
+): AssistantMessage {
+	return isEnabled() && !live.showsMessage(message)
+		? removeThinking(message)
+		: message;
+}
+
 function shouldHide(
 	state: PatchState,
 	isEnabled: EnabledCheck,
+	live: LiveRun,
 	component: AssistantMessageComponent,
 ): boolean {
 	if (!isEnabled()) return false;
 	const runtime = getRuntimeState(component);
-	const isStreaming =
-		state.components.get(component)?.isStreaming ?? runtime.isStreaming;
+	const renderState = state.components.get(component);
+	const message = renderState?.originalMessage ?? runtime.lastMessage;
+	if (message && live.showsMessage(message)) return false;
+	const isStreaming = renderState?.isStreaming ?? runtime.isStreaming;
 	return isStreaming || runtime.hasToolCalls;
 }
 
 function createPatches(
 	state: PatchState,
 	isEnabled: EnabledCheck,
+	live: LiveRun,
 	originals: RenderMethods,
 ): RenderMethods {
 	return {
@@ -103,9 +118,8 @@ function createPatches(
 			const originalMessage =
 				message === previous?.renderedMessage ? previous.originalMessage : message;
 			const isStreaming = requestedStreaming ?? runtime.isStreaming;
-			const renderedMessage = isEnabled()
-				? removeThinking(originalMessage)
-				: originalMessage;
+			live.track(originalMessage);
+			const renderedMessage = renderMessage(isEnabled, live, originalMessage);
 
 			state.components.set(this, {
 				originalMessage,
@@ -119,7 +133,7 @@ function createPatches(
 			this: AssistantMessageComponent,
 			...args: Parameters<AssistantRender>
 		): string[] {
-			if (shouldHide(state, isEnabled, this)) return [];
+			if (shouldHide(state, isEnabled, live, this)) return [];
 			const lines = originals.render.call(this, ...args);
 			const elapsed = state.components.get(this)?.elapsed ?? getElapsed(this);
 			return isEnabled() && elapsed ? [elapsed, ...lines] : lines;
@@ -144,7 +158,11 @@ function finish(state: PatchState, elapsed: string): void {
 	}
 }
 
-function install(state: PatchState, isEnabled: EnabledCheck): void {
+function install(
+	state: PatchState,
+	isEnabled: EnabledCheck,
+	live: LiveRun,
+): void {
 	if (state.originals) return;
 
 	const prototype = AssistantMessageComponent.prototype;
@@ -152,22 +170,30 @@ function install(state: PatchState, isEnabled: EnabledCheck): void {
 		render: prototype.render,
 		update: prototype.updateContent,
 	};
-	const patches = createPatches(state, isEnabled, originals);
+	const patches = createPatches(state, isEnabled, live, originals);
 	state.originals = originals;
 	state.patches = patches;
 	prototype.updateContent = patches.update;
 	prototype.render = patches.render;
 }
 
-function refresh(state: PatchState, isEnabled: EnabledCheck): void {
+function refresh(
+	state: PatchState,
+	isEnabled: EnabledCheck,
+	live: LiveRun,
+): void {
 	const update = state.originals?.update;
 	if (!update) return;
 
 	for (const [component, renderState] of state.components) {
-		renderState.renderedMessage = isEnabled()
-			? removeThinking(renderState.originalMessage)
-			: renderState.originalMessage;
-		update.call(component, renderState.renderedMessage, renderState.isStreaming);
+		const { originalMessage } = renderState;
+		const renderedMessage = renderMessage(isEnabled, live, originalMessage);
+		// Folding a run calls this after every run, so only rebuild messages whose
+		// thinking visibility changed.
+		const wasStripped = renderState.renderedMessage !== originalMessage;
+		if ((renderedMessage !== originalMessage) === wasStripped) continue;
+		renderState.renderedMessage = renderedMessage;
+		update.call(component, renderedMessage, renderState.isStreaming);
 	}
 }
 
@@ -197,11 +223,12 @@ function uninstall(state: PatchState): void {
 
 export function createAssistantRenderPatch(
 	isEnabled: EnabledCheck,
+	live: LiveRun,
 ): AssistantRenderPatch {
 	const state: PatchState = { components: new Map() };
 	return {
-		install: () => install(state, isEnabled),
-		refresh: () => refresh(state, isEnabled),
+		install: () => install(state, isEnabled, live),
+		refresh: () => refresh(state, isEnabled, live),
 		finish: (elapsed) => finish(state, elapsed),
 		uninstall: () => uninstall(state),
 	};

@@ -1,4 +1,5 @@
 import { ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
+import type { LiveRun } from "./live.ts";
 
 type ToolRender = typeof ToolExecutionComponent.prototype.render;
 
@@ -7,8 +8,15 @@ export interface ToolRenderPatch {
 	uninstall(): void;
 }
 
+function getToolCallId(component: ToolExecutionComponent): string {
+	// SAFETY: Pi's ToolExecutionComponent stores the call id in this runtime
+	// field; the extension only reads it.
+	return (component as unknown as { toolCallId: string }).toolCallId;
+}
+
 export function createToolRenderPatch(
 	isEnabled: () => boolean,
+	live: LiveRun,
 ): ToolRenderPatch {
 	let original: ToolRender | undefined;
 	let patch: ToolRender | undefined;
@@ -22,7 +30,8 @@ export function createToolRenderPatch(
 				this: ToolExecutionComponent,
 				...args: Parameters<ToolRender>
 			): string[] {
-				return isEnabled() ? [] : (original?.call(this, ...args) ?? []);
+				const hidden = isEnabled() && !live.showsToolCall(getToolCallId(this));
+				return hidden ? [] : (original?.call(this, ...args) ?? []);
 			};
 			prototype.render = patch;
 		},

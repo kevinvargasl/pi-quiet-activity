@@ -394,6 +394,102 @@ function assistantMessage(
 	};
 }
 
+function toolComponent(toolCallId: string): ToolExecutionComponent {
+	return new ToolExecutionComponent(
+		"smoke_tool",
+		toolCallId,
+		{},
+		undefined,
+		undefined,
+		{ requestRender() {} } as never,
+		process.cwd(),
+	);
+}
+
+function renderText(component: AssistantMessageComponent): string {
+	return component.render(100).join("\n");
+}
+
+function assertLiveView(): void {
+	mock.timers.enable({ apis: ["Date", "setInterval"], now: 1000 });
+	const harness = createHarness();
+	try {
+		emit(harness, "session_start");
+		const earlier = new AssistantMessageComponent(assistantMessage([
+			{ type: "text", text: "earlier narration" },
+			{ type: "toolCall", id: "earlier-call", name: "smoke_tool", arguments: {} },
+		], "toolUse"));
+		const earlierTool = toolComponent("earlier-call");
+		void harness.command("live on", harness.ctx);
+		mock.timers.tick(1000);
+
+		// The current run renders like Pi's normal transcript; earlier runs stay hidden.
+		emit(harness, "agent_start");
+		const narrationMessage = assistantMessage([
+			{ type: "thinking", thinking: "live thought" },
+			{ type: "text", text: "live narration" },
+			{ type: "toolCall", id: "live-call", name: "smoke_tool", arguments: {} },
+		], "toolUse");
+		const narration = new AssistantMessageComponent();
+		narration.updateContent(narrationMessage, true);
+		const liveTool = toolComponent("live-call");
+		assert.match(renderText(narration), /live thought[\s\S]*live narration/);
+		assert(liveTool.render(100).length > 0);
+		assert.deepEqual(earlier.render(100), []);
+		assert.deepEqual(earlierTool.render(100), []);
+		narration.updateContent(narrationMessage, false);
+
+		const answerMessage = assistantMessage([
+			{ type: "thinking", thinking: "answer thought" },
+			{ type: "text", text: "live answer" },
+		], "stop");
+		const answer = new AssistantMessageComponent();
+		answer.updateContent(answerMessage, true);
+		assert.match(renderText(answer), /live answer/);
+		answer.updateContent(answerMessage, false);
+
+		// Completion folds the run down to the elapsed line and the answer.
+		mock.timers.tick(5000);
+		emit(harness, "agent_end", { messages: [narrationMessage, answerMessage] });
+		emit(harness, "agent_settled", { aborted: false });
+		assert.deepEqual(narration.render(100), []);
+		assert.deepEqual(liveTool.render(100), []);
+		assert.match(renderText(answer), /^Worked for 5s\n[\s\S]*live answer/);
+		assert.doesNotMatch(renderText(answer), /answer thought/);
+
+		// Cancelled and failed runs stay expanded until a later run completes.
+		emit(harness, "agent_start");
+		const cancelled = new AssistantMessageComponent(assistantMessage([
+			{ type: "text", text: "cancelled narration" },
+			{ type: "toolCall", id: "cancelled-call", name: "smoke_tool", arguments: {} },
+		], "toolUse"));
+		const cancelledTool = toolComponent("cancelled-call");
+		emit(harness, "agent_settled", { aborted: true });
+		emit(harness, "agent_start");
+		const failedMessage = assistantMessage([], "error");
+		const failed = new AssistantMessageComponent(failedMessage);
+		emit(harness, "agent_end", { messages: [failedMessage] });
+		emit(harness, "agent_settled", { aborted: false });
+		assert.match(renderText(cancelled), /cancelled narration/);
+		assert(cancelledTool.render(100).length > 0);
+		assert.match(renderText(failed), /Error:/);
+
+		emit(harness, "agent_start");
+		const nextMessage = assistantMessage([{ type: "text", text: "next answer" }], "stop");
+		const next = new AssistantMessageComponent(nextMessage);
+		emit(harness, "agent_end", { messages: [nextMessage] });
+		emit(harness, "agent_settled", { aborted: false });
+		assert.deepEqual(cancelled.render(100), []);
+		assert.deepEqual(cancelledTool.render(100), []);
+		assert.match(renderText(failed), /Error:/);
+		assert.match(renderText(next), /^Worked for 0s\n[\s\S]*next answer/);
+	} finally {
+		void harness.command("live off", harness.ctx);
+		emit(harness, "session_shutdown");
+		mock.timers.reset();
+	}
+}
+
 function assertQuietRendering(): RenderFixture {
 	const finalMessage = assistantMessage(
 		[
@@ -438,15 +534,7 @@ function assertQuietRendering(): RenderFixture {
 
 	const processComponent = new AssistantMessageComponent(processMessage);
 	assert.deepEqual(processComponent.render(100), []);
-	const tool = new ToolExecutionComponent(
-		"smoke_tool",
-		"call-1",
-		{},
-		undefined,
-		undefined,
-		{ requestRender() {} } as never,
-		process.cwd(),
-	);
+	const tool = toolComponent("call-1");
 	assert.deepEqual(tool.render(100), []);
 	return { final, finalMessage, process: processComponent, tool };
 }
@@ -529,6 +617,7 @@ export default function smokeTest(_pi: ExtensionAPI): void {
 	assertElapsedTimeFormatting();
 	assertLiveTimer();
 	assertCancelledRun();
+	assertLiveView();
 	const harness = createHarness();
 	emit(harness, "session_start");
 	assertActivityDisplay(harness);
