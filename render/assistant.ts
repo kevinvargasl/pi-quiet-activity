@@ -132,7 +132,7 @@ function createPatches(
 		render: function render(
 			this: AssistantMessageComponent,
 			...args: Parameters<AssistantRender>
-		): string[] {
+		): ReturnType<AssistantRender> {
 			if (shouldHide(state, isEnabled, live, this)) return [];
 			const lines = originals.render.call(this, ...args);
 			const elapsed = state.components.get(this)?.elapsed ?? getElapsed(this);

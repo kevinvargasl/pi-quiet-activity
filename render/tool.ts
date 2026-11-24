@@ -29,7 +29,7 @@ export function createToolRenderPatch(
 			patch = function render(
 				this: ToolExecutionComponent,
 				...args: Parameters<ToolRender>
-			): string[] {
+			): ReturnType<ToolRender> {
 				const hidden = isEnabled() && !live.showsToolCall(getToolCallId(this));
 				return hidden ? [] : (original?.call(this, ...args) ?? []);
 			};

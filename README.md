@@ -120,7 +120,7 @@ pi install npm:pi-quiet-activity
 To pin this release:
 
 ```bash
-pi install npm:pi-quiet-activity@1.4.1
+pi install npm:pi-quiet-activity@1.5.0
 ```
 
 To try the current main branch without installing it:
@@ -135,7 +135,9 @@ Run `/reload` in an existing Pi session after installation, or restart Pi.
 
 The extension patches Pi's exported `AssistantMessageComponent` and `ToolExecutionComponent` render methods for the current TUI session. It restores the original methods during session shutdown/reload.
 
-Smoke-tested with Pi 1.2.0 (Node.js 22.19 or newer). Pi 1.0+ defaults to fullscreen; quiet mode uses the same transcript components in fullscreen and regular TUI modes. RPC, JSON, and print modes keep their normal output.
+Smoke-tested with Pi 1.6.0 (Node.js 22.19 or newer). Pi 1.0+ defaults to fullscreen; quiet mode uses the same transcript components in fullscreen and regular TUI modes. RPC, JSON, and print modes keep their normal output.
+
+Pi 1.6 returns readonly render output and caches component lines. The render patches preserve that output and create a new array when adding the elapsed-time line.
 
 The final-response instruction uses a structured prompt section so Pi can preserve cached prefixes when updating instructions (where supported by the model). Older versions without structured sections retain the previous prompt fallback. Elapsed time spans automatic retries and continuations until `agent_settled`.
 
@@ -161,4 +163,4 @@ npm test
 npm run typecheck
 ```
 
-Development dependencies pin Pi 1.2.0 for reproducible compatibility checks; published peer dependencies remain host-provided. The smoke tests cover rendering, content invalidation, toggling, user/custom-run prompt sections, native MCP and nested codemode activity, live timer updates and persistence, live view folding (including cancelled and failed runs), elapsed time across retries, cancellation without stale-answer changes, timer cleanup on settle/reload, and non-TUI lifecycle handling.
+Development dependencies pin Pi 1.6.0 for reproducible compatibility checks; published peer dependencies remain host-provided. The smoke tests cover rendering, content invalidation, toggling, user/custom-run prompt sections, native MCP and nested codemode activity, live timer updates and persistence, live view folding (including cancelled and failed runs), elapsed time across retries, cancellation without stale-answer changes, timer cleanup on settle/reload, and non-TUI lifecycle handling.
